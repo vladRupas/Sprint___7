@@ -1,16 +1,25 @@
+import com.github.javafaker.Faker;
+import com.google.gson.Gson;
 import io.qameta.allure.Description;
+import io.qameta.allure.Step;
 import io.qameta.allure.junit4.DisplayName;
 import io.restassured.RestAssured;
-import io.restassured.response.Response;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.io.File;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
 
 public class LoginCourierTest {
+
+    private final Gson gson = new Gson();
+    private final Faker faker = new Faker();
+
+    private String login;
+    private String password;
+    private String firstName;
+    private Integer courierId;
 
     @Before
     public void setup() {
@@ -19,84 +28,85 @@ public class LoginCourierTest {
 
     @Test
     @DisplayName("Courier Login")
-    @Description("Testing if a courier can login")
-
+    @Description("Testing if a courier can login and negative cases fail")
     public void loginCourier() {
 
-        File json = new File("src/test/resources/loginCourier.json");
+        generateTestData();
+        createTestCourier();
 
-        CourierId courierId =
-                given()
-                        .header("Content-type", "application/json")
-                        .and()
-                        .body(json)
-                        .post("/api/v1/courier/login")
-                        .body()
-                        .as(CourierId.class);
+        Login correctLogin = new Login(login, password);
+        courierId = loginCourierAndGetId(correctLogin).getId();
 
-        Response response =
-                given()
-                        .header("Content-type", "application/json")
-                        .and()
-                        .body(json)
-                        .when()
-                        .post("/api/v1/courier/login");
-        response.then()
+        assertSuccessfulLogin(correctLogin, courierId);
+
+        assertLoginFails(new Login("WrongUser", password));
+        assertLoginFails(new Login(login, "WrongPass"));
+        assertLoginFails(new Login("invalidUser", "invalidPass"));
+    }
+
+    @Step("Generating test data")
+    private void generateTestData() {
+        login = faker.name().username();
+        password = faker.internet().password();
+        firstName = faker.name().firstName();
+    }
+
+    @Step("Creating test courier")
+    private void createTestCourier() {
+        Courier courier = new Courier(login, password, firstName);
+        String json = gson.toJson(courier);
+
+        given()
+                .header("Content-type", "application/json")
+                .body(json)
+                .post("/api/v1/courier");
+    }
+
+    @Step("Log in courier and get ID")
+    private CourierId loginCourierAndGetId(Login credentials) {
+        return given()
+                .header("Content-type", "application/json")
+                .body(gson.toJson(credentials))
+                .post("/api/v1/courier/login")
+                .body()
+                .as(CourierId.class);
+    }
+
+    @Step("Assert successful login for courier with id: {id}")
+    private void assertSuccessfulLogin(Login credentials, int id) {
+        given()
+                .header("Content-type", "application/json")
+                .body(gson.toJson(credentials))
+                .post("/api/v1/courier/login")
+                .then()
                 .statusCode(200)
-                .and()
-                .body("id", equalTo(courierId.getId()));
+                .body("id", equalTo(id));
+    }
 
-        String wrongLogin = "{" +
-                "  \"login\": \"Rupasova\", " +
-                "  \"password\": \"123\" " +
-                "}";
-
+    @Step("Assert failed login for login: {credentials.login}")
+    private void assertLoginFails(Login credentials) {
         given()
                 .header("Content-type", "application/json")
-                .and()
-                .body(wrongLogin)
-                .when()
+                .body(gson.toJson(credentials))
                 .post("/api/v1/courier/login")
                 .then()
                 .statusCode(404)
-                .and()
                 .body("message", equalTo("Учетная запись не найдена"));
+    }
 
-        String wrongPassword = "{" +
-                "  \"login\": \"Rupasov\", " +
-                "  \"password\": \"124\" " +
-                "}";
-
+    @Step("Delete courier with id: {id}")
+    private void deleteCourierById(int id) {
         given()
-                .header("Content-type", "application/json")
-                .and()
-                .body(wrongPassword)
-                .when()
-                .post("/api/v1/courier/login")
+                .delete("/api/v1/courier/{id}", id)
                 .then()
-                .statusCode(404)
-                .and()
-                .body("message", equalTo("Учетная запись не найдена"));
+                .statusCode(200);
+    }
 
-        String wrongCourier = "{" +
-                "  \"login\": \"vosapuR\", " +
-                "  \"password\": \"321\" " +
-                "}";
-
-        given()
-                .header("Content-type", "application/json")
-                .and()
-                .body(wrongCourier)
-                .when()
-                .post("/api/v1/courier/login")
-                .then()
-                .statusCode(404)
-                .and()
-                .body("message", equalTo("Учетная запись не найдена"));
-
-        given()
-                .delete("/api/v1/courier/{courierId.getId()}", courierId.getId())
-                .then().assertThat().statusCode(200);
+    @After
+    public void cleanup() {
+        if (courierId != null) {
+            deleteCourierById(courierId);
+        }
     }
 
 }
